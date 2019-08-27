@@ -177,35 +177,66 @@
 
         PHFetchOptions *opt = [PHFetchOptions new];
 
-        NSEnumerator<PHAssetCollection*> *r;
+        NSEnumerator<PHAssetCollection *> *r;
+        NSUInteger numberOfCollections;
         if (pathId == nil) { // isAll == true
-            r = (id) [self->_idCollectionDict allValues];
-
+            NSArray<PHAssetCollection *> *array = [self->_idCollectionDict allValues];
+            r = (id) array;
+            numberOfCollections = array.count;
         } else { // isAll == false
             PHCollection *collection = _idCollectionDict[pathId];
 
-            r = (id) [PHAssetCollection fetchAssetCollectionsWithLocalIdentifiers:@[collection.localIdentifier] options:opt];
+            PHFetchResult<PHAssetCollection *> *array = [PHAssetCollection fetchAssetCollectionsWithLocalIdentifiers:@[collection.localIdentifier] options:opt];
+            r = (id) array;
+            numberOfCollections = array.count;
         }
 
         NSMutableArray<NSString *> *arr = [NSMutableArray new];
+        NSUInteger indexes[numberOfCollections];
+        for (NSUInteger i = 0; i < numberOfCollections; ++i) {
+            indexes[i] = 0;
+        }
 
         opt.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"creationDate" ascending:NO]];
         NSUInteger count = 0;
         NSUInteger lowerBoundary = page * pageSize;
+        NSUInteger current = 0;
+        BOOL isNotEmpty = YES;
+        NSMutableArray<PHFetchResult<PHAsset *> *> *fetchResults = [NSMutableArray new];
         for (PHAssetCollection *assetCollection in r) {
-            PHFetchResult<PHAsset *> *fetchResult = [PHAsset fetchAssetsInAssetCollection:assetCollection
-                                                                                  options:opt];
-            for (NSUInteger idx = lowerBoundary; idx < fetchResult.count && count < pageSize; ++idx) {
-                PHAsset *asset = fetchResult[idx];
-                if (!asset.isVideo || (asset.isVideo && hasVideo)) {
-                    ++count;
-                    NSString *id = asset.localIdentifier;
-                    _idAssetDict[id] = asset;
-                    [arr addObject:id];
+            [fetchResults addObject:[PHAsset fetchAssetsInAssetCollection:assetCollection
+                                                                  options:opt]];
+        }
+        while (count < pageSize && isNotEmpty) {
+            isNotEmpty = NO;
+            NSUInteger minIndex = 0;
+            PHAsset *minAsset;
+            for (NSUInteger i = 0; i < numberOfCollections; ++i) {
+                PHFetchResult<PHAsset *> *fetchResult = fetchResults[i];
+                if (indexes[i] < fetchResult.count) {
+                    isNotEmpty = YES;
+                    PHAsset *asset = fetchResult[indexes[i]];
+                    if (minAsset == nil
+                            || [asset.creationDate compare:minAsset.creationDate] == NSOrderedDescending) {
+                        minIndex = i;
+                        minAsset = asset;
+                    }
                 }
             }
-            if (count >= pageSize) break;
-            lowerBoundary = MAX(lowerBoundary - fetchResult.count, 0);
+            if (minAsset != nil) {
+                ++current;
+                ++indexes[minIndex];
+                PHAsset *asset = minAsset;
+                NSString *id = asset.localIdentifier;
+                if (current >= lowerBoundary
+                        && (!asset.isVideo || (asset.isVideo && hasVideo))
+                        && ![arr containsObject:id]) {
+                    _idAssetDict[id] = asset;
+                    [arr addObject:id];
+                    ++count;
+                }
+
+            }
         }
 
         flutterResult(arr);
